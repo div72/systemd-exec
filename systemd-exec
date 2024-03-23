@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+
+set -e
+
+clean_quotes() {
+  sed -E 's/(.*)=\"(.*)\"/\1=\2/g'
+}
+
+quote_env() {
+  sed -E 's/"/\\"/g;s/(.*)=(.*)/\1="\2"/g;'
+}
+
+if (("$#" < 2 )); then
+  echo "USAGE: systemd-exec <unit> <cmd...>"
+  exit 2
+fi
+
+SERVICE="${1%.service}.service"
+SERVICE_PATH="$(find -L $(systemd-analyze --system unit-paths) -maxdepth 1 -type f -name "$SERVICE" 2>/dev/null | head -n1)"
+
+if [ -z "$SERVICE_PATH" ]; then
+  echo "ERROR: Could not find unit file for service: $SERVICE"
+  echo "Search paths:"
+  systemd-analyze --system unit-paths | sed -E 's/^/- /g'
+  exit 1
+fi
+
+EXEC_START="$(grep -E "^ExecStart=" $SERVICE_PATH | clean_quotes | cut -d '=' -f 2-)"
+USER="$(grep -E "^User=" $SERVICE_PATH | clean_quotes | cut -d '=' -f 2-)"
+GROUP="$(grep -E "^Group=" $SERVICE_PATH | clean_quotes | cut -d '=' -f 2-)"
+WORKING_DIRECTORY="$(grep -E "^WorkingDirectory=" $SERVICE_PATH | clean_quotes | cut -d '=' -f 2-)"
+ENVIRONMENT="$(grep -E "^Environment=" $SERVICE_PATH | clean_quotes | cut -d '=' -f 2- | quote_env | paste -s -d ' ')"
+
+USER="${USER:-root}"
+GROUP="${GROUP:-root}"
+WORKING_DIRECTORY="${WORKING_DIRECTORY:-$PWD}"
+
+shift 1
+sudo -u "$USER" -g "$GROUP" -- bash -c "cd \"$WORKING_DIRECTORY\" && env EXEC_START=\"$EXEC_START\" $ENVIRONMENT $*"
